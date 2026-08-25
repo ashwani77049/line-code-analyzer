@@ -1,0 +1,24 @@
+START HERE
+
+You do not need prior GitHub knowledge.
+
+1. Open this folder in VS Code.
+2. Terminal → New Terminal.
+3. Run: python --version
+4. Run: python -m venv venv
+5. Run: venv\Scripts\activate
+6. Run: pip install -r requirements.txt
+7. Run: streamlit run app.py
+
+First demo:
+Binary = 10110010
+Line Code = NRZ
+Pulse = Rectangular
+SNR = 20 dB
+
+Then click Generate & Analyze.
+
+If an error appears, take a screenshot of the terminal and send it.
+Do not randomly delete or change files.
+
+GitHub comes AFTER the app runs. README.md contains the GitHub commands.
