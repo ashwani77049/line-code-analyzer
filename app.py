@@ -1,6 +1,6 @@
+import streamlit as st
 import numpy as np
 import pandas as pd
-import streamlit as st
 import matplotlib.pyplot as plt
 
 st.set_page_config(
@@ -9,53 +9,66 @@ st.set_page_config(
     layout="wide"
 )
 
+st.title("📡 Line Code Analyzer")
+st.caption("SP25 Digital Communication Group Project")
 
-# ================= LINE CODING =================
+
+# =====================================================
+# LINE CODING
+# =====================================================
 
 def line_code(bits, code, sps):
 
-    b = [int(x) for x in bits]
     signal = []
 
-    for bit in b:
+    for bit in bits:
 
         if code == "NRZ":
-            level = 1 if bit == 1 else -1
+            level = 1 if bit == "1" else -1
             signal += [level] * sps
 
         elif code == "RZ":
-            level = 1 if bit == 1 else -1
-            signal += [level] * (sps // 2)
-            signal += [0] * (sps - sps // 2)
+            level = 1 if bit == "1" else -1
+            half = sps // 2
+            signal += [level] * half
+            signal += [0] * (sps - half)
 
         elif code == "Manchester":
+            half = sps // 2
 
-            if bit == 1:
-                signal += [1] * (sps // 2)
-                signal += [-1] * (sps - sps // 2)
-
+            if bit == "1":
+                signal += [1] * half
+                signal += [-1] * (sps - half)
             else:
-                signal += [-1] * (sps // 2)
-                signal += [1] * (sps - sps // 2)
+                signal += [-1] * half
+                signal += [1] * (sps - half)
 
     return np.array(signal, dtype=float)
 
 
-# ================= PULSE SHAPING =================
+# =====================================================
+# PULSE SHAPING
+# =====================================================
 
-def pulse_shape(signal, pulse, sps, bt, beta, span):
+def pulse_shape(x, pulse, sps, bt, beta, span):
 
     if pulse == "Rectangular":
-        return signal.copy()
+        return x.copy()
 
-    # Filter time
-    t = np.arange(
+    # Filter length
+    n = max(3, int(span * sps) + 1)
+
+    if n % 2 == 0:
+        n += 1
+
+    t = np.linspace(
         -span / 2,
-        span / 2 + 1 / sps,
-        1 / sps
+        span / 2,
+        n
     )
 
-    # ---------- Gaussian ----------
+    # ---------------- Gaussian ----------------
+
     if pulse == "Gaussian":
 
         sigma = np.sqrt(np.log(2)) / (
@@ -66,21 +79,25 @@ def pulse_shape(signal, pulse, sps, bt, beta, span):
             -(t ** 2) / (2 * sigma ** 2)
         )
 
-    # ---------- RRC ----------
+    # ---------------- RRC ----------------
+
     else:
 
-        h = np.zeros(len(t))
+        beta = max(0.01, min(beta, 0.99))
+        h = np.zeros_like(t)
 
-        for i, x in enumerate(t):
+        for i, ti in enumerate(t):
 
-            if abs(x) < 1e-10:
+            if abs(ti) < 1e-10:
 
                 h[i] = (
                     1 - beta +
                     4 * beta / np.pi
                 )
 
-            elif abs(abs(4 * beta * x) - 1) < 1e-10:
+            elif abs(
+                abs(4 * beta * ti) - 1
+            ) < 1e-8:
 
                 h[i] = (
                     beta / np.sqrt(2)
@@ -95,80 +112,92 @@ def pulse_shape(signal, pulse, sps, bt, beta, span):
             else:
 
                 h[i] = (
-                    np.sin(np.pi * x * (1 - beta))
+                    np.sin(
+                        np.pi * ti * (1 - beta)
+                    )
                     +
-                    4 * beta * x
-                    * np.cos(np.pi * x * (1 + beta))
+                    4 * beta * ti *
+                    np.cos(
+                        np.pi * ti * (1 + beta)
+                    )
                 ) / (
-                    np.pi * x
-                    * (1 - (4 * beta * x) ** 2)
+                    np.pi * ti *
+                    (1 - (4 * beta * ti) ** 2)
                 )
 
-    # Normalize filter
-    h = h / np.sum(h)
+    # Normalize
+    s = np.sum(h)
 
-    # Apply filter
-    return np.convolve(signal, h, mode="same")
+    if abs(s) > 1e-12:
+        h = h / s
+
+    return np.convolve(x, h, mode="same")
 
 
-# ================= AWGN =================
+# =====================================================
+# NOISE
+# =====================================================
 
-def add_noise(signal, snr, seed):
+def add_noise(x, snr, seed):
 
-    np.random.seed(seed)
+    rng = np.random.default_rng(seed)
 
-    power = np.mean(signal ** 2)
+    power = np.mean(x ** 2)
 
-    if power == 0:
-        return signal
+    if power < 1e-12:
+        return x.copy()
 
     noise_power = power / (10 ** (snr / 10))
 
-    noise = np.random.normal(
+    noise = rng.normal(
         0,
         np.sqrt(noise_power),
-        len(signal)
+        len(x)
     )
 
-    return signal + noise
+    return x + noise
 
 
-# ================= SPECTRUM =================
+# =====================================================
+# SPECTRUM
+# =====================================================
 
-def get_spectrum(signal, sps):
+def get_spectrum(x, sps):
 
-    signal = signal - np.mean(signal)
+    x = x - np.mean(x)
 
-    X = np.fft.rfft(signal)
+    X = np.fft.rfft(x)
 
-    frequency = np.fft.rfftfreq(
-        len(signal),
+    f = np.fft.rfftfreq(
+        len(x),
         1 / sps
     )
 
-    magnitude = np.abs(X)
+    mag = np.abs(X)
 
-    if np.max(magnitude) != 0:
-        magnitude = magnitude / np.max(magnitude)
+    if mag.max() > 0:
+        mag = mag / mag.max()
 
-    return frequency, magnitude
+    return f, mag
 
 
-# ================= EYE DIAGRAM =================
+# =====================================================
+# EYE DIAGRAM
+# =====================================================
 
-def eye_diagram(signal, sps):
+def get_eye(x, sps):
 
     length = 2 * sps
     traces = []
 
     for i in range(
         0,
-        len(signal) - length,
+        len(x) - length + 1,
         sps
     ):
 
         traces.append(
-            signal[i:i + length]
+            x[i:i + length]
         )
 
         if len(traces) >= 100:
@@ -177,119 +206,105 @@ def eye_diagram(signal, sps):
     return np.array(traces)
 
 
-# ================= SIDEBAR =================
+# =====================================================
+# SIDEBAR
+# =====================================================
 
 with st.sidebar:
 
     st.header("Signal Settings")
 
-    # IMPORTANT:
-    # key="bits" makes input properly editable
-    st.text_input(
-        "Binary input",
-        value="10110010",
-        key="bits"
-    )
+    # FORM = ALL INPUTS ARE TAKEN TOGETHER
+    with st.form("signal_form"):
 
-    code = st.selectbox(
-        "Line code",
-        ["NRZ", "RZ", "Manchester"]
-    )
+        bits = st.text_input(
+            "Binary input",
+            value="10110010"
+        )
 
-    pulse = st.selectbox(
-        "Pulse shaping",
-        ["Rectangular", "Gaussian", "RRC"]
-    )
+        code = st.selectbox(
+            "Line code",
+            ["NRZ", "RZ", "Manchester"]
+        )
 
-    sps = st.slider(
-        "Samples per bit",
-        min_value=20,
-        max_value=200,
-        value=50,
-        step=10
-    )
+        pulse = st.selectbox(
+            "Pulse shaping",
+            ["Rectangular", "Gaussian", "RRC"]
+        )
 
-    snr = st.slider(
-        "SNR (dB)",
-        min_value=0,
-        max_value=30,
-        value=20
-    )
+        sps = st.slider(
+            "Samples per bit",
+            20,
+            200,
+            50,
+            10
+        )
 
-    bt = st.slider(
-        "Gaussian BT",
-        min_value=0.20,
-        max_value=1.00,
-        value=0.50,
-        step=0.05,
-        disabled=(pulse != "Gaussian")
-    )
+        snr = st.slider(
+            "SNR (dB)",
+            0,
+            30,
+            20,
+            1
+        )
 
-    beta = st.slider(
-        "RRC roll-off",
-        min_value=0.10,
-        max_value=0.90,
-        value=0.35,
-        step=0.05,
-        disabled=(pulse != "RRC")
-    )
+        bt = st.slider(
+            "Gaussian BT",
+            0.20,
+            1.00,
+            0.50,
+            0.05
+        )
 
-    span = st.slider(
-        "Filter span",
-        min_value=4,
-        max_value=12,
-        value=8,
-        step=1,
-        disabled=(pulse == "Rectangular")
-    )
+        beta = st.slider(
+            "RRC roll-off",
+            0.10,
+            0.90,
+            0.35,
+            0.05
+        )
 
-    seed = st.number_input(
-        "Noise seed",
-        min_value=0,
-        max_value=999999,
-        value=42
-    )
+        span = st.slider(
+            "Filter span (symbols)",
+            4,
+            12,
+            8,
+            1
+        )
 
-    generate = st.button(
-        "Generate & Analyze",
-        type="primary",
-        use_container_width=True
-    )
+        seed = st.number_input(
+            "Noise seed",
+            min_value=0,
+            max_value=999999,
+            value=42,
+            step=1
+        )
+
+        generate = st.form_submit_button(
+            "Generate & Analyze",
+            use_container_width=True
+        )
 
 
-# ================= MAIN APP =================
-
-st.title("📡 Line Code Analyzer")
-
-st.caption(
-    "SP25 Digital Communication Group Project"
-)
-
-
-# ================= GENERATE =================
+# =====================================================
+# GENERATE
+# =====================================================
 
 if generate:
 
-    # Get current input
-    bits = st.session_state.bits.strip()
-    bits = bits.replace(" ", "")
+    # Remove spaces
+    bits = bits.strip().replace(" ", "")
 
-    # Check binary input
-    if not bits:
-
+    # Check input
+    if bits == "":
         st.error("Please enter binary input.")
-
         st.stop()
 
-    if any(x not in "01" for x in bits):
-
-        st.error(
-            "Invalid input! Enter only 0 and 1."
-        )
-
+    if any(c not in "01" for c in bits):
+        st.error("Binary input must contain only 0 and 1.")
         st.stop()
 
-    # ---------- Line Coding ----------
+    # ---------------- Line Code ----------------
 
     base = line_code(
         bits,
@@ -297,7 +312,7 @@ if generate:
         sps
     )
 
-    # ---------- Pulse Shaping ----------
+    # ---------------- Pulse Shaping ----------------
 
     shaped = pulse_shape(
         base,
@@ -308,7 +323,7 @@ if generate:
         span
     )
 
-    # ---------- AWGN ----------
+    # ---------------- Noise ----------------
 
     received = add_noise(
         shaped,
@@ -316,7 +331,7 @@ if generate:
         int(seed)
     )
 
-    # ---------- Metrics ----------
+    # ---------------- Metrics ----------------
 
     energy = np.sum(
         received ** 2
@@ -332,299 +347,244 @@ if generate:
         np.abs(received)
     )
 
-    # ---------- Spectrum ----------
+    # ---------------- Spectrum ----------------
 
-    frequency, magnitude = get_spectrum(
+    f, mag = get_spectrum(
         received,
         sps
     )
 
-    # ---------- Eye Diagram ----------
+    # ---------------- Eye ----------------
 
-    eyes = eye_diagram(
+    eye = get_eye(
         received,
         sps
     )
 
-    # ---------- Success ----------
+    # =================================================
+    # SUCCESS
+    # =================================================
 
     st.success(
         f"{code} + {pulse} + {snr} dB SNR generated successfully!"
     )
 
+    # =================================================
+    # SETTINGS
+    # =================================================
 
-    # ================= INFORMATION =================
+    st.subheader("Selected Settings")
 
-    c1, c2, c3, c4 = st.columns(4)
+    a, b, c, d = st.columns(4)
 
-    c1.metric(
-        "Bits",
-        bits
-    )
+    a.metric("Binary", bits)
+    b.metric("Line Code", code)
+    c.metric("Pulse", pulse)
+    d.metric("SNR", f"{snr} dB")
 
-    c2.metric(
-        "Line Code",
-        code
-    )
+    # =================================================
+    # PLOT FUNCTION
+    # =================================================
 
-    c3.metric(
-        "Pulse",
-        pulse
-    )
-
-    c4.metric(
-        "SNR",
-        f"{snr} dB"
-    )
-
-
-    # ================= WAVEFORM FUNCTION =================
-
-    def show_waveform(signal, title):
+    def plot_signal(x, title):
 
         fig, ax = plt.subplots(
-            figsize=(11, 3)
+            figsize=(10, 3)
         )
 
-        ax.plot(signal)
+        ax.plot(x)
 
         ax.set_title(title)
-
-        ax.set_xlabel(
-            "Samples"
-        )
-
-        ax.set_ylabel(
-            "Amplitude"
-        )
-
+        ax.set_xlabel("Samples")
+        ax.set_ylabel("Amplitude")
         ax.grid(True)
-
-        fig.tight_layout()
 
         st.pyplot(fig)
 
         plt.close(fig)
 
+    # =================================================
+    # 1 LINE CODE
+    # =================================================
 
-    # ================= 1 =================
+    st.subheader("1. Line-Coded Signal")
 
-    st.subheader(
-        "1. Line-Coded Signal"
-    )
-
-    show_waveform(
+    plot_signal(
         base,
         f"{code} Waveform"
     )
 
+    # =================================================
+    # 2 PULSE SHAPING
+    # =================================================
 
-    # ================= 2 =================
+    st.subheader("2. Pulse-Shaped Signal")
 
-    st.subheader(
-        "2. Pulse-Shaped Signal"
-    )
-
-    show_waveform(
+    plot_signal(
         shaped,
         f"{pulse} Pulse-Shaped Signal"
     )
 
+    # =================================================
+    # 3 RECEIVED
+    # =================================================
 
-    # ================= 3 =================
+    st.subheader("3. Received Signal")
 
-    st.subheader(
-        "3. Received Signal"
-    )
-
-    show_waveform(
+    plot_signal(
         received,
         f"Received Signal - {snr} dB SNR"
     )
 
+    # =================================================
+    # 4 SPECTRUM
+    # =================================================
 
-    # ================= 4 =================
-
-    st.subheader(
-        "4. Frequency Spectrum"
-    )
+    st.subheader("4. Frequency Spectrum")
 
     fig, ax = plt.subplots(
-        figsize=(11, 3)
+        figsize=(10, 3)
     )
 
-    ax.plot(
-        frequency,
-        magnitude
-    )
+    ax.plot(f, mag)
 
     ax.set_title(
         "Normalized Magnitude Spectrum"
     )
 
-    ax.set_xlabel(
-        "Frequency"
-    )
-
-    ax.set_ylabel(
-        "Magnitude"
-    )
-
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Magnitude")
     ax.grid(True)
-
-    fig.tight_layout()
 
     st.pyplot(fig)
 
     plt.close(fig)
 
+    # =================================================
+    # 5 METRICS
+    # =================================================
 
-    # ================= 5 =================
+    st.subheader("5. Signal Metrics")
 
-    st.subheader(
-        "5. Signal Metrics"
-    )
+    a, b, c, d = st.columns(4)
 
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric(
+    a.metric(
         "Energy",
         f"{energy:.4f}"
     )
 
-    c2.metric(
+    b.metric(
         "Average Power",
         f"{power:.4f}"
     )
 
-    c3.metric(
+    c.metric(
         "RMS",
         f"{rms:.4f}"
     )
 
-    c4.metric(
+    d.metric(
         "Peak",
         f"{peak:.4f}"
     )
 
+    # =================================================
+    # 6 EYE DIAGRAM
+    # =================================================
 
-    # ================= 6 =================
+    st.subheader("6. Eye Diagram")
 
-    st.subheader(
-        "6. Eye Diagram"
-    )
-
-    if len(eyes) > 0:
+    if len(eye) > 0:
 
         fig, ax = plt.subplots(
             figsize=(8, 4)
         )
 
-        for row in eyes:
+        for row in eye:
             ax.plot(
                 row,
                 alpha=0.3
             )
 
         ax.set_title(
-            "Eye Diagram - 2 Symbol Intervals"
+            "Eye Diagram"
         )
 
-        ax.set_xlabel(
-            "Samples"
-        )
-
-        ax.set_ylabel(
-            "Amplitude"
-        )
-
+        ax.set_xlabel("Samples")
+        ax.set_ylabel("Amplitude")
         ax.grid(True)
-
-        fig.tight_layout()
 
         st.pyplot(fig)
 
         plt.close(fig)
 
+    # =================================================
+    # 7 INTERPRETATION
+    # =================================================
 
-    # ================= 7 =================
+    st.subheader("7. Interpretation")
 
-    st.subheader(
-        "7. Interpretation"
+    st.write(
+        f"**{code}:** Converts 0 and 1 into a digital waveform."
     )
 
     st.write(
-        f"• **{code}** converts binary bits into a digital waveform."
+        f"**{pulse}:** Changes the shape of the transmitted pulse."
     )
 
     st.write(
-        f"• **{pulse}** changes the shape of the transmitted pulses."
+        "**AWGN:** Adds random noise to simulate a communication channel."
     )
 
     st.write(
-        "• **AWGN** adds random noise to simulate a communication channel."
+        f"**SNR = {snr} dB:** Controls the amount of noise."
     )
 
     st.write(
-        f"• **{snr} dB SNR** controls the amount of noise."
+        "**Spectrum:** Shows the frequency components of the signal."
     )
 
     st.write(
-        "• Spectrum shows the frequency components of the signal."
+        "**Eye Diagram:** Helps observe signal quality and timing."
     )
 
-    st.write(
-        "• Eye diagram helps visualize digital signal quality."
-    )
+    # =================================================
+    # 8 CSV
+    # =================================================
 
+    st.subheader("8. Download Waveform")
 
-    # ================= 8 =================
-
-    st.subheader(
-        "8. Download Data"
-    )
-
-    data = pd.DataFrame({
+    df = pd.DataFrame({
         "Line_Coded": base,
         "Pulse_Shaped": shaped,
         "Received": received
     })
 
     st.download_button(
-        label="Download Waveform CSV",
-        data=data.to_csv(index=False),
-        file_name="line_code_analyzer.csv",
-        mime="text/csv"
+        "Download CSV",
+        df.to_csv(index=False),
+        "line_code_analyzer.csv",
+        "text/csv"
     )
-
-
-# ================= BEFORE GENERATION =================
 
 else:
 
     st.info(
-        "Enter binary data, select the options, "
-        "then click Generate & Analyze."
+        "Enter all settings on the left and click Generate & Analyze."
     )
 
     st.markdown(
         """
-        **Signal Flow**
+### Signal Flow
 
-        Binary Bits  
-        ↓  
-        Line Coding  
-        ↓  
-        Pulse Shaping  
-        ↓  
-        AWGN Channel  
-        ↓  
-        Received Signal  
-        ↓  
-        Spectrum + Metrics + Eye Diagram
-        """
+**Binary Input**
+→ **Line Coding**
+→ **Pulse Shaping**
+→ **AWGN Noise**
+→ **Received Signal**
+→ **Spectrum + Metrics + Eye Diagram**
+"""
     )
-
 
 st.divider()
 
